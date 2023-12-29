@@ -1,0 +1,184 @@
+---
+title: "Assignment 5 - Effect heterogeneity"
+author: "GIORGIO COPPOLA, 224545"
+date: "`r format(Sys.time(), '%B %d, %Y | %H:%M:%S | %Z')`"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    highlight: tango
+    number_sections: no
+    theme: cosmo
+    toc: no
+---  
+  
+<style>
+div.answer {background-color:#f3f0ff; border-radius: 5px; padding: 20px;}
+</style>
+
+```{r, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      eval = TRUE,
+                      error = FALSE,
+                      message = FALSE,
+                      warning = FALSE,
+                      comment = NA,
+                      fig.align = "center")
+```
+
+
+***
+
+```{r, include=F}
+# YOU CAN LOAD THE PACKAGES YOU ARE USING IN THIS CODE CHUNK
+pacman::p_load(tidyverse, dplyr, tidyr, readr, knitr, ggplot2, wooldridge, stargazer, ggeffects, marginaleffects, margins, memer)
+```
+
+::: {.alert .alert-warning role="alert"}
+**General rules:**
+
+-   Make sure to knit your Rmd regularly to catch bugs early. You'll have to submit the solution as HTML, not Rmd.
+-   You should clearly indicate what you submit as your solution for every single task. The code that produces a solution is not sufficient - we want to see the output too. If not indicated otherwise, the output in the console is sufficient, which means that you don't have to add a sentence like "The ATE is 3.5.".
+-   Figures need meaningful descriptions. Axes need meaningful labels. The use of colors serves a purpose. Tables need meaningful headers.
+-   For any numeric result you print, do not report more than 2 decimal points. This means that you regularly have to apply rounding.
+-   Every task deserves its own space. Your comments and explanations should be clearly distinguishable from other content of your script.
+-   Your solution sheet should be straightforward to read. We should not have to actively search for the solutions. Don't print entire datasets or hundreds of observations.
+:::
+
+---
+
+### Task 1 - Heterogeneous effects in earnings [6 points in total]
+
+For this task, let's use the `wage2` data set from the `wooldridge` package. It contains cross-sectional data on monthly earnings and on some other variables of interest. Among the relevant variables that will be used for this assignment, we have:
+
+- `wage`: monthly earnings in US dollars
+- `educ`: years of education
+- `exper`: years of work experience
+- `tenure`: years with current employer
+- `IQ`: IQ score
+
+The outcome of interest for the following tasks is monthly earnings, stored in the `wage` variable.
+
+**a) Estimate a model that predicts wage using data on years of education, years of work experience, years with current employer, and IQ score, standardizing all predictor variables. Then, estimate a model with the same variables but also a term that allows for heterogeneous effects of IQ by work experience. Report the results of both models in one properly formatted HTML table with easy-to-read variable names. [2 points]**
+
+*Note:* In order to standardize a variable, you can use the following function: `scale_num <- function(x) {as.numeric(scale(x))}`. Just using `scale()` might screw up some of your code below.
+
+```{r}
+# Put your code here.
+# Load data and standardize function
+data(wage2)
+scale_num <- function(x) {as.numeric(scale(x))}
+
+# Standardize predictor variables
+wage2 <- wage2 %>%
+  mutate(educ_scaled = scale_num(educ),
+         exper_scaled = scale_num(exper),
+         tenure_scaled = scale_num(tenure),
+         IQ_scaled = scale_num(IQ))
+
+# Model 1: Standard predictors
+model_simple <- lm(wage ~ educ_scaled + exper_scaled + tenure_scaled + IQ_scaled, data = wage2)
+
+# Model 2: Standard predictors and interaction term
+model_het <- lm(wage ~ educ_scaled + exper_scaled + tenure_scaled + IQ_scaled + exper_scaled:IQ_scaled, data = wage2)
+
+# Report results in a formatted HTML table
+stargazer(model_simple, model_het, type = "text", 
+          covariate.labels = c("Years of Education (Stand)", 
+                               "Years of Work Experience (Stand)",
+                               "Years with Current Employer (Stand)",
+                               "IQ Score (Stand)",
+                               "Work Experience x IQ (Stand)"),
+          title = "Regression Results",
+          column.labels = c("Model 1", "Model 2"),
+          out = "regression_results.html")
+```
+
+<br>
+
+**b) Provide an interpretation of your findings of the first model (the one without heterogeneous effects), focusing on the estimated coefficients. Be mindful of your use of causal language. [1 point]**
+
+::: answer
+Put your answer here.
+
+In the first model, we estimated the relationship between monthly wages and four standardized predictor variables: years of education, years of work experience, years with the current employer, and IQ score. The estimated coefficients from this model can be interpreted as the associations between each predictor variable and the outcome (monthly wage) while holding the other predictor variables constant. The model indicates that one additional year of education is associated with an average increase of 125.64 dollars in wages, an additional year of work experience is correlated with an average increase of 65.52 dollars in wages, an additional year with current employer is associated in average with 37.35 dollars increase in wages, and an additional unit of IQ is associated with an average increase of 73.35 dollars in wages. All of the coefficients are statistically significant.
+
+:::
+
+<br>
+
+**c) With your interaction model, calculate the marginal/partial effect of IQ on wage along your moderating variable (i.e., $\frac{\partial Y_i}{\partial {D}_i}$). Report the effects in the form of a coefficient plot. Provide an interpretation of your findings. [3 points]**
+
+```{r}
+# Put your code here.
+work_experience_values <- seq(min(wage2$exper_scaled), max(wage2$exper_scaled), length.out = 100)
+marginal_effects <- data.frame(work_experience = work_experience_values,
+                               marginal_effect = coef(model_het)["IQ_scaled"] + coef(model_het)["exper_scaled:IQ_scaled"] * work_experience_values)
+
+# Create coefficient plot
+ggplot(marginal_effects, aes(x = work_experience, y = marginal_effect)) +
+  geom_line() +
+  geom_hline(yintercept = 0, linetype = "dotted", color = "red") +
+  theme_minimal() +
+  labs(title = "Marginal Effect of IQ on Wage by Work Experience",
+       x = "Work Experience (Standardized)",
+       y = "Marginal Effect of IQ on Wage")
+```
+
+<div class = "answer"> 
+Put your answer here.
+</div>
+
+<br>
+
+
+---
+
+### Task 2 - Predicting Olympics Games sprint performance [6 points]
+
+The dataset in `sprinters.csv` contains the winning times from the 100 meter sprint in Olympic competitions going back to 1900. Source: A. J. Tatem, C. A. Guerra, P. M. Atkinson and S. I. Hay, Nature Vol. 431, p. 525 (2004); updated version up to Tokyo Olympic Games. 
+
+**a) Estimate a model that reports the effects of gender and time on winning times. Provide the model fit in a graph that (a) shows individual observations colored by gender (b) gives the overall model fit together with uncertainty bands. [2 points]**
+
+```{r, message=FALSE}
+# Put your code here.
+```
+
+
+<br>
+
+**b) Think of a way to find out if women caught up over time, and report your solution in a table or figure. Provide a verbal explanation of your findings. [2 points]**
+
+```{r}
+# Put your code here.
+```
+
+<div class = "answer"> 
+Put your answer here.
+</div>
+
+<br>
+
+**c) The authors of the Nature article were interested in predicting the finishing times for the 2156 Olympics. Using a model that allows for different trends by gender, generate your own predictions for both men's and women's finishing times in 2156, and provide point predictions as well as 95% confidence intervals. Interpret your findings - do your predictions make sense? Why/why not? [2 points]**
+
+
+```{r}
+# Put your code here.
+```
+
+
+<div class = "answer"> 
+Put your answer here.
+</div>
+
+<br>
+
+---
+
+### Task 3 - Statistics inspired meme [1 bonus percentage point]
+
+Create a stats-inspired meme using `memer` (or any other R meme dedicated  package) to earn one bonus percentage point. The meme should be related to one of the topics covered in the sessions this assignment is based on.
+
+```{r}
+
+```

@@ -1,0 +1,423 @@
+---
+title: "Assignment 1 - The Potential Outcomes Framework and DAGs"
+author: "GIORGIO COPPOLA"
+date: "`r format(Sys.time(), '%B %d, %Y | %H:%M:%S | %Z')`"
+output: 
+
+  html_document:
+    #code_folding: hide
+    df_print: paged
+    highlight: tango
+    number_sections: no
+    theme: cosmo
+    toc: no
+  pdf_document:
+    toc: no
+---
+
+```{=html}
+<style>
+div.answer {background-color:#f3f0ff; border-radius: 5px; padding: 20px;}
+</style>
+<style>
+div.gradingadvice {background-color:#a2bc89; border-radius: 5px; padding: 20px;}
+</style>
+```
+```{r, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      eval = TRUE,
+                      error = FALSE,
+                      message = FALSE,
+                      warning = FALSE,
+                      comment = NA)
+```
+
+------------------------------------------------------------------------
+
+```{r, include=F}
+# LOAD PACKAGES HERE (PLEASE DON'T COPY IN CODE TO INSTALL PACKAGES)
+pacman::p_load(tidyverse, ggdag, dagitty, magrittr)
+```
+
+### Task 1 - Does union membership affect workers' wages? [6 points in total]
+
+A research group is interested in the effects that being part of a worker's union has on workers' wages. The researchers gathered the incomes of over 4,000 workers from years 2010 to 2017 in the U.S.
+
+The researchers claim that being a member of a workers' union does not really affect a workers' income.
+
+You are a bit skeptical of the results. Fortunately, you can observe the potential outcomes of over 4,000 workers under the two states of interest. In other words, you have data for the expected incomes of workers in a reality where they are part of a workers' union $(union = TRUE)$, as well as one where are not part of a workers' union $(union = FALSE)$.
+
+The data\footnote{These are simulated data.} are stored in the `wages_union.rds` file and contain the following information:
+
+-   `subject_id`: identification number for each worker
+-   `union_memb`: binary marker for actual treatment state
+-   `salary_0`: potential hourly salary under no union membership (union = FALSE)
+-   `salary_1`: potential hourly salary under union membership (union = TRUE)
+-   `observed_salary`: hourly salary observed in reality
+
+```{r}
+# Overview of the data:
+wages_union <- readRDS("./wages_union.rds")
+head(wages_union, 10)
+```
+
+<br>
+
+a)  **Extract the following quantities of interest with `dplyr` functions, rounding to two decimal places. If the output is more than a single number, provide the first ten elements (not the entire data frame!).**
+
+-   **Individual treatment effects (ITEs) [0.5 points]**
+
+```{r}
+# Put your code here
+wages_union_ite <- wages_union %>%
+  dplyr::mutate(ITE = salary_1 - salary_0)
+
+ITE <- wages_union_ite %>%
+  filter(subject_id <= 10) %>%
+  select(subject_id, ITE)
+
+head(ITE, 10)
+```
+
+<br>
+
+-   **Average treatment effect (ATE) [0.5 points]**
+
+```{r warning=TRUE}
+# Put your code here
+ATE <- wages_union_ite %>%
+  dplyr::summarize(ATE = mean(ITE)) %>%
+  pull(ATE)
+
+round(ATE, 2)
+```
+
+<br>
+
+-   **Average treatment effect for the treated (ATT) [0.5 points]**
+
+```{r}
+# Put your code here
+ATT <- wages_union_ite %>%
+  dplyr::filter(union_memb == TRUE) %>%
+  dplyr::summarize(ATT = mean(ITE)) %>%
+  pull(ATT)
+
+round(ATT, 2)
+```
+
+<br>
+
+-   **Average treatment effect for the control (ATC) [0.5 points]**
+
+```{r}
+# Put your code here
+ATC <- wages_union_ite %>%
+  dplyr::filter(union_memb == FALSE) %>%
+  dplyr::summarize(ATC = mean(ITE)) %>%
+  pull(ATC)
+
+round(ATC, 2)
+```
+
+<br>
+
+-   **Naive average treatment effect (NATE) [0.5 points]**
+
+```{r}
+# Put your code here
+NATE <- wages_union %>% 
+  dplyr::group_by(union_memb) %>%
+  dplyr::summarize(nate = mean(observed_salary)) %>%
+  summarize(NATE = nate[2] - nate[1]) %>%
+  pull(NATE)
+
+round(NATE, 2)
+```
+
+
+<br>
+
+-   **Selection, or baseline, bias [0.5 points]**
+
+```{r}
+# Put your code here
+selection_bias <- wages_union %>%
+  group_by(union_memb) %>%
+  summarize(y0 = mean(salary_0)) %>%
+  summarize(selection_bias = y0[2] - y0[1]) %>%
+  pull(selection_bias)
+
+round(selection_bias, 2)
+```
+
+<br>
+
+-   **Differential treatment effect, or heterogeneous treatment effect, bias [0.5 points]**
+
+```{r}
+# Put your code here
+heterogeneous_eff <- wages_union_ite %>%
+  group_by(union_memb) %>%
+  summarize(treat_eff = mean(ITE)) %>%
+  summarize(treat_eff = treat_eff[2] - treat_eff[1]) %>%
+  pull(treat_eff)
+  
+prop_control <- wages_union %>%
+  count(union_memb) %>% 
+  mutate(prop = prop.table(n)) %>% 
+  filter(union_memb == 0) %>%
+  pull(prop)
+
+heterogeneous_bias <- prop_control*heterogeneous_eff
+
+round(heterogeneous_bias, 2)
+```
+
+<br>
+
+b)  **Visualize the distribution of individual treatment effects using an appropriately specified density plot. Highlight the other treatment effects that you generated in (a) in the plot using vertical lines and text labels [3 points]**
+
+```{r}
+# Put your code here
+labels <- data.frame(x = c(3.41, 6.94, 1.9, 5.1),
+                     y = c(0.05, 0.03, 0.06, 0.04),
+                     label = c("ATE", "ATT", "ATC", "NATE"))
+  
+plot_ite <- ggplot(wages_union_ite, aes(x = ITE)) +
+  geom_density(fill = "lightblue", alpha = 0.4, color = "darkblue") +
+  geom_vline(xintercept = 3.41, color = "red") +
+  geom_vline(xintercept = 6.94, color = "orange") + 
+  geom_vline(xintercept = 1.9, color = "brown") +
+  geom_vline(xintercept = 5.1, color = "gold") +
+  geom_label(data = labels, aes(x = x, y = y, label = label),
+             fill = "white", color = "black", size = 2.5) +
+  labs(x = "salary difference", y = "frequence")
+
+plot_ite
+```
+
+<br>
+
+### Task 2 - Simulating a basic structural causal model in R [3 points in total]
+
+**In R, it is straightforward to generate simulated data from a structural causal model. Famimiarize yourself with the R code below, then run it and show visually how weight and daily sleep in hours are related, treating sleep as the variable to be explained and putting it on the appropriate axis, but ignoring animal type. Employ a plot type that is appropriate given the variable types (raw data points should still be visible), and make sure that the plot is formatted nicely. Then, reproduce the plot, now also highlighting the role of the species in the causal model. [3 points]**
+
+```{r}
+set.seed(123)
+animal <- rep(c("dog", "cat", "rabbit", "fish"), each = 500)
+
+# weight in grams as a function of animal type
+weight <- rnorm(500, 10000, 10000*.1) * (animal == "dog") + 
+          rnorm(500, 5000, 5000*.1) * (animal == "cat") + 
+          rnorm(500, 3000, 3000*.075) * (animal == "rabbit") + 
+          rnorm(500, 500, 500*.05) * (animal == "fish")
+
+# daily sleep in hours as a function of animal type
+sleepDaily <- rnorm(500, 8, 8*.1) * (animal == "dog") + 
+          rnorm(500, 10, 10*.1) * (animal == "cat") + 
+          rnorm(500, 12, 12*.075) * (animal == "rabbit") + 
+          rnorm(500, 14, 14*.05) * (animal == "fish")
+
+dat <- data.frame(animal, weight, sleepDaily, stringsAsFactors = FALSE)
+```
+
+<br>
+
+```{r, fig.height=6,fig.width=6}
+# Put your code here
+plot_animals_1 <-  ggplot(dat, aes(x = weight, y= sleepDaily)) +
+  geom_point(size = 2.5, alpha = 0.3, pch = 20)+
+  theme_minimal() +
+  geom_smooth(method = "lm", se = F) +
+  labs(x = "weight",
+       y = "sleep")
+
+plot_animals_1
+```
+
+```{r}
+plot_animals_2 <- ggplot(dat, aes(x = weight, y= sleepDaily, color = animal)) +
+  geom_point(size = 2.5, alpha = 0.3, pch = 20) +
+  theme_minimal() +
+  geom_smooth(method = "lm", se = F) +
+  labs(x = "weight",
+       y = "sleep")
+
+plot_animals_2
+```
+
+<br>
+
+### Task 3 - Bad for him, bad for her, but good for everyone - wait what? [5 points in total]
+
+A doctor takes a look at research data about a new drug that promises to reduce the risk of heart disease. As an outcome, the doctor measured if patients had a heart attack or not. She studies both the effect among female and male patients. The doctor did not randomize the treatment with the new drug, instead, patients were able to decide whether they want to take the treatment or not.
+
+| Groups | Heart Attack & Drug | No Heart Attack & Drug | Heart Attack & No Drug | No Heart Attack & No Drug |
+|---------------|---------------|---------------|---------------|---------------|
+| Female | 1                   | 19                     | 3                      | 37                        |
+| Male   | 12                  | 28                     | 8                      | 12                        |
+| Total  | 13                  | 47                     | 11                     | 49                        |
+
+```{r}
+trial_data <- data.frame("Gender"=c("Female","Female","Male","Male"),
+                         "Treatment"=c("Drug","NoDrug","Drug","NoDrug"),
+                         "HeartAttack"=c(1,3,12,8),
+                         "NoHeartAttack"=c(19,37,28,12))
+head(trial_data)
+```
+
+<br>
+
+a)  **What is the naive average treatment effect of taking the drug on having a heart attack for everyone? What is the naive treatment effect for female and male patients? [2 points]**
+
+```{r}
+NATE_trial_general <- trial_data %>%
+  group_by(Treatment) %>%
+  summarise(heart_attack_rate = sum(HeartAttack) / sum(HeartAttack + NoHeartAttack)) %>%
+  summarise(NATE_general = heart_attack_rate[1] - heart_attack_rate[2]) %>%
+  pull(NATE_general)
+
+round(NATE_trial_general, 3)
+```
+
+
+```{r}
+NATE_trial_female <- trial_data %>%
+  group_by(Treatment) %>%
+  filter(Gender == "Female") %>%
+  summarise(heart_attack_rate = sum(HeartAttack) / sum(HeartAttack + NoHeartAttack)) %>%
+  summarise(NATE_female = heart_attack_rate[1] - heart_attack_rate[2]) %>%
+  pull(NATE_female)
+
+NATE_trial_female
+```
+
+```{r}
+NATE_trial_male <- trial_data %>%
+  group_by(Treatment) %>%
+  filter(Gender == "Male") %>%
+  summarise(heart_attack_rate = sum(HeartAttack) / sum(HeartAttack + NoHeartAttack)) %>%
+  summarise(NATE_male = heart_attack_rate[1] - heart_attack_rate[2]) %>%
+  pull(NATE_male)
+
+NATE_trial_male
+```
+
+::: answer
+Write your answer here:
+The NATE for everyone is 0.033
+The NATE for female is -0.025
+The NATE for male is -0.1
+
+<br>
+:::
+
+b)  **Provide a DAG that helps explain why the drug seems to be bad for females, bad for males, but good for everyone. What kind of bias creates this reversal in the effect? [1 point]**
+
+```{r}
+# Put your code here
+coord_dag <- list(
+  x = c(Treatment = 0, Gender = 1, HeartAttack = 2),
+  y = c(Treatment = 0, Gender = 1, HeartAttack = 0))
+
+dag_task3 <- ggdag::dagify(Treatment ~ Gender,
+                          HeartAttack ~ Gender,
+                          HeartAttack ~ Treatment, 
+                          labels = c("Treatment" = "Treatment", 
+                                      "Gender" = "Gender",
+                                      "HeartAttack" = "Heart\nAttack"),
+                          latent = "Gender",
+                          exposure = "Treatment",
+                          outcome = "HeartAttack",
+                          coords = coord_dag)
+
+ggdag(dag_task3, text = FALSE, use_labels = "label") +
+  theme_void()
+```
+
+::: answer
+Write your answer here:
+In this case, gender is a confounder. It opens a backdoor in the path, creating an omitted variable bias. We need to control for it to close the backdoor and offset the bias. We can interpret this as gender influencing the possibility of having a heart attack (depending on physical characteristics).
+
+Moreover, since we know that the treatment is not randomized, but the patients can choose whether or not to be in the treatment or control group, we can also interpret the confounder gender as influencing the willingness to get the treatment. Indeed, we can imagine a situation where a gender category is more prone to get the treatment in respect to the other, depending on their knowledge of the probability of having a heart attack depending on their gender. In this case, it would influence the choice of getting the treatment, leading to a selection bias.
+:::
+
+<br>
+
+c)  **How could you estimate the causal effect taking the information about both male and female patients into account? Explain and then provide an estimate! [2 points]**
+
+::: answer
+Write you answer here:
+To estimate a causal effect from the available data, we must carefully use the NATE. Ideally, if we had counterfactuals, we would have used the ATE. Since we cannot access counterfactuals, we need to find the least naive NATE to minimize the biases. We know that the sample is not randomized, but we also know that gender is a confounder, which impacts the relationship between the treatment and the outcome (D <-- G --> Y). Accounting that, the least naive NATE is given by the weighted average of the NATE we found for the two gender groups, given by the (NATE_female + NATE_male)/ 2. In this way, we are able to control for the omitted variable bias produced by gender.
+
+Indeed, if we confront the values of the NATEs we have found, we get the following:
+- NATE_general (without having conditioned for the confounder 'gender'): 0.033
+- NATE_female: -0.025
+- NATE_male: -0.1
+- Avg_NATE: -0.0625
+
+From this picture, it is clear that the narration by which the drug is bad for him, bad for her, but good for everyone is false. The fact that the drug seemed good for everyone was given by the OVB given by the confounder 'gender'. After having conditioned for it, we notice that the drug decreases the possibility of having a heart attack in females, males, and of course, everyone.
+
+If we plotted the data without differentiating by gender, we would see that the line of best fit for everyone (without conditioning for the confounder) would go upward, but if we condition for gender, we will get two downward slopes (corresponding to the NATE_female and NATE_male). The Avg_NATE line would correspond to the average of the two. However, this is not unbiased, but the least biased estimate that we can calculate according to the data we have and to (my) knowledge of statistics.
+:::
+
+```{r}
+# Put your code here
+Avg_NATE <- (NATE_trial_female + NATE_trial_male)/2
+Avg_NATE
+```
+
+<br>
+
+### Task 4 - Statistics inspired meme [1 bonus percentage point]
+
+**Create a meme inspired by the topics of this assignment using R to earn one bonus point!**
+
+```{r, eval = F}
+# Put your code here
+meme <- image_read("/Users/giocopp/Library/Mobile Documents/com~apple~CloudDocs/Desktop/Unive/Hertie School/2nd Semester/Statistics 2/Labs/01-assignment/memestats.jpg")
+
+meme <- image_annotate(meme, "BAD FOR HIM, BAD FOR HER", 
+                        size = 50, color = "white", font = "Impact",
+                        strokecolor = "black",
+                        gravity = "north", location = "+0+15")
+
+meme <- image_annotate(meme, "GOOD FOR EVERYONE", 
+                        size = 50, color = "white", font = "Impact",
+                        strokecolor = "black",
+                        gravity = "south", location = "+0+15")
+
+image_write(meme, "meme_stats.jpg")
+knitr::include_graphics("meme_stats.jpg")
+
+library(magick)
+library(meme)
+img <- image_read("https://pbs.twimg.com/media/Ep0WjJ4W8AAyKYG?format=png&name=small")
+x <- meme(img, "Bad for him, bad for her", "Good for everyone")
+plot(x)
+
+library(ggplot2)
+library(png)
+library(grid)
+
+image <- readPNG("meme_stats.png")
+text_df <- data.frame(
+  text = "Bad for him, bad for her, good for everyone",
+  x = 0.9,
+  y = 0.9
+)
+
+ggplot() +
+  annotation_custom(rasterGrob(image), xmin=-Inf, xmax=Inf, ymin=-Inf, ymax=Inf) +
+  geom_text(data = text_df, aes(x, y, label = text), size = 5, color = "white", font= "Impact", gravity = "south", location = "+0+225") +
+  theme_void()
+
+```
+
+
+
+
+
+
+

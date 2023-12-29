@@ -1,0 +1,419 @@
+---
+title: "Assignment 2 - The backdoor criterion, regression, and matching"
+author: "GIORGIO COPPOLA"
+date: "`r format(Sys.time(), '%B %d, %Y | %H:%M:%S | %Z')`"
+output:
+  html_document:
+    #code_folding: hide
+    df_print: paged
+    highlight: tango
+    number_sections: no
+    theme: cosmo
+    toc: no
+  pdf_document:
+    toc: no
+---
+
+```{=html}
+<style>
+div.answer {background-color:#f3f0ff; border-radius: 5px; padding: 20px;}
+</style>
+```
+```{=html}
+<style>
+div.blue pre { background-color:lightblue; }
+div.blue pre.r { background-color:blue; }
+</style>
+```
+```{r, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      eval = TRUE,
+                      error = FALSE,
+                      message = FALSE,
+                      warning = FALSE,
+                      comment = NA)
+```
+
+------------------------------------------------------------------------
+
+```{r, include = F}
+pacman::p_load(tidyverse, wooldridge, knitr, htmlTable, png, grid, ggplot2, dplyr, flextable, sjPlot, sjmisc,  sjlabelled, stargazer) # ADD MORE PACKAGES IF NECESSARY. PLEASE DON'T COPY IN CODE TO INSTALL PACKAGES
+```
+
+::: {.alert .alert-warning role="alert"}
+**General rules:**
+
+-   Make sure to knit your Rmd regularly to catch bugs early. You'll have to submit the solution as HTML, not Rmd.
+-   You should clearly indicate what you submit as your solution for every single task. The code that produces a solution is not sufficient - we want to see the output too. If not indicated otherwise, the output in the console is sufficient, which means that you don't have to add a sentence like "The ATE is 3.5.".
+-   Figures need meaningful descriptions. Axes need meaningful labels. The use of colors serves a purpose. Tables need meaningful headers.
+-   For any numeric result you print, do not report more than 2 decimal points. This means that you regularly have to apply rounding.
+-   Every task deserves its own space. Your comments and explanations should be clearly distinguishable from other content of your script.
+-   Your solution sheet should be straightforward to read. We should not have to actively search for the solutions. Don't print entire datasets or hundreds of observations.
+:::
+
+<br>
+
+------------------------------------------------------------------------
+
+### Task 1 - Closing backdoors in a DAG [4 points in total]
+
+After months of research, you decide that your thesis will focus on the relationship between groundbreaking policy $X$ and societally relevant outcome $Y$. In preparation for the meeting with your supervisor, you read all the relevant literature, conduct interviews, and finally write down a directed acyclic graph. You believe this graph captures all of the relevant variables and their relationships (see figure below). You proudly present the DAG below to your supervisor.
+
+```{r echo=F, fig.align="center", out.width="50%"}
+knitr::include_graphics("05-DAG.png")
+```
+
+<br>
+
+a)  **Reproduce the DAG with R! The absolute position of the nodes is irrelevant, but all relationships should match those depicted in the original DAG. [1 point]**
+
+```{r, fig.align='center'}
+# Put your code here
+c_dag <- list(
+  x = c(Z4 = -1, X = -1, Z2 = 1, Y = 1, Z1 = 0, Z3 = 0),
+  y = c(Z4 = 3, X = 1, Z2 = 3, Y = 1, Z1 = 2, Z3 = 0))
+
+dag_thesis <- ggdag::dagify(X ~ Z4,
+                         Z1 ~ Z4,
+                         Z1 ~ Z2,
+                         Y ~ Z2,
+                         Y ~ Z1,
+                         X ~ Z1,
+                         Z3 ~ X,
+                         Y ~ Z3,
+                         Y ~ X,
+                         coords = c_dag,
+                         exposure = "X",
+                         outcome = "Y")
+
+
+ggdag::ggdag(dag_thesis) +
+  theme_void() +
+  ggtitle("Directed Anticyclic Graph")
+```
+
+<br>
+
+b)  **For your DAG, write down all paths from X to Y. Which paths are causal? [1 point]**
+
+```{r, fig.align='center'}
+# Put your code here
+dagitty::paths(dag_thesis)
+```
+::: answer
+Put your answer here:
+
+The causal path are X --> Y and X --> Z3 --> Y.
+The non-causal backdoor paths are X <-- Z1 --> Y (open), X <-- Z4 --> Z1 --> Y (open), X <-- Z1 <- Z2 --> Y (open), and X <-- Z4 --> Z1 <-- Z2 --> Y (closed).
+:::
+
+<br>
+
+c)  **In the path** $X$ ← $Z_4$ → $Z_1$ ← $Z_2$ → $Y$, what type of node is $Z_1$? Does conditioning on $Z_1$ block or unblock this path from X to $Y$? Briefly explain your answer. [0.5 points]
+
+::: answer
+Put your answer here:
+
+Z1 is a collider. Colliders naturally block the path between X and Y. Therefore, conditioning for Z1 would unlock this path, creating a collider bias, inducing a relationship between X and Y, even though the relationship is not actually present in the full population.
+:::
+
+<br>
+
+c)  **Now consider the path** $X$ ← $Z_1$ → $Y$. Does conditioning on $Z_1$ block or unblock this path? Briefly explain your answer. [0.5 points]
+
+::: answer
+Put your answer here:
+
+Z1 in this case is a confounder. Confounders does not naturally block the path between X and Y. Conditioning for a confounder indeed blocks the path. We need to condition for a confounder to avoid OVB correctly identify the causal relation between X and Y.
+:::
+
+<br>
+
+d)  **Based on your DAG, list the minimum sets of variables to condition on that satisfy the backdoor criterion for identifying the effect of** $X$ on $Y$. [1 point]
+
+```{r, fig.align='center'}
+# Put your code here
+ggdag::ggdag_adjustment_set(dag_thesis, shadow = T) +
+  theme_void() + ggtitle("Adjusted Directed Anticyclic Graph")
+```
+
+::: answer
+Put your answer here:
+
+The variables we should condition for is Z1, as it is a confounder of the relation between X and Y. However, Z1 is also a collider in the relationship between Z4 and Z2. By controlling for Z1, we will open a path that should remain closed, inducing a relation between Z2 and Z4. To avoid this condition, we should also control for either Z2 or Z4.
+:::
+
+<br>
+
+------------------------------------------------------------------------
+
+### Task 2 - Smoking behavior and infant birth weight [7 points in total]
+
+For this exercise, you will use the `bwght` dataset from the `wooldridge` package. The data comes from the 1988 US National Health Interview Survey and contains information of maternal smoking behavior, infant birth weight, and additional social and economic markers. *Note:* The `bwght` dataset is already loaded in the first R chunk of this file (`pacman::p_load()`. To see what additional information is in the dataset, you can type `?bwght` in your R console.
+
+<br>
+
+a)  **Estimate the following model:** $\text{bwght} = \beta_0 + \beta_1\text{cigs} + \beta_2\text{male}$ and report the estimated model as an HTML table. Then, use R to predict the estimated birth weight in kilograms for a baby girl with a mother that smoked 20 cigarettes per day while pregnant. [2 points]
+
+```{r, results = 'asis'}
+# Put your code here
+# Creating the model and the table:
+model <- lm(bwght ~ cigs + male, data = bwght)
+
+model_table <- stargazer::stargazer(model, type = "html", 
+                dep.var.labels = "Birth weight, ounces", 
+                covariate.labels = c("Cigs per day while pregnant", "Male child"),
+                title = "Effects of Smoking on Birth Weight by Baby's Gender",
+                digits = 2)
+```
+
+```{r}
+# Prediction of a female baby's weight with a mother 
+# smoking 20 cigarettes per day while pregnant:
+round(predict(model, newdata = data.frame(cigs = 20, male = 0))*0.02835, 2)
+```
+
+<br>
+
+b)  **Create a new dummy variable, smoker, that takes value 1 if** $cigs > 0$, otherwise 0, and report the proportion of smokers in the sample. Check the balance (smokers vs. non-smokers) on variables in the dataset that could serve as covariates. Your output should be in a well-formatted HTML table. [1 point]
+
+```{r}
+# Put your code here
+# Creating the dummy variable:
+bwght <- bwght %>%
+mutate(smoker = ifelse(cigs == 0, 0, 1))
+
+# Proportion of smokers in the sample:
+round(mean(bwght$smoker == 1), 4)
+```
+
+::: answer
+Put your answer here:
+
+The proportion of the smokers in sample is of 15.27%. 
+:::
+
+```{r}
+# Creating a balance table of the variable in the sample for the control 
+# (Smoker = 0) and treatment (Smoker = 1) groups:
+list_cov <- c("cigtax", "faminc", "fatheduc", "motheduc", "parity")
+
+table2b <- bwght %>% 
+            dplyr::summarize_at(list_cov, funs(list(broom::tidy(t.test(. ~ smoker))))) %>% 
+            purrr::map(1) %>%
+            dplyr::bind_rows(.id='variables') %>%
+            dplyr::select(variables, estimate1, estimate2, p.value) %>%
+            dplyr::mutate_if(is.numeric, round, 2) %>%
+            knitr::kable(col.names = c("Variable", "Control (Smoker = 0)", 
+                                       "Treat (Smoker = 1)", "P value")) %>% 
+            kableExtra::kable_classic_2(bootstrap_options = "striped", full_width = F)
+
+table2b
+```
+
+::: answer
+Put your answer here:
+
+The table shows that among the people in the control group (those who do not smoke while pregnant), the tax incidence is lower (19.51 dollars) in respect to the tax incidence for people who smoke while pregnant (20.20 dollars). This means that, on average, people who smoke live in states where the tax on cigarettes is higher, opposite to our intuitive expectation. However, the result is not statistically significant.
+More interestingly, for the variables "family income", "mother education" and "father education", we notice that all of them are higher for non-smokers in respect to smokers. This means that mothers who do not smoke are part, on average, of richer families (are richer or their relatives or partners are richer). Moreover, they are more educated, and their partners are also more educated. We can expect that outcome, and indeed, the coefficients are statistically significant. The variable "parity", namely the influence of having the first child, does not influence much, but the data is not statistically significant. If it would have been significant in statistical terms, the insignificance in substantial terms would have been an interesting findings, meaning that having a first child in respect of having a subsequent one (second or third,etc) does not change much the smoking habits. However, we cannot draw this conclusion because of statistical insignificance.
+:::
+
+<br>
+
+c)  **Specify a logit model to generate the propensity scores using variables you would want to match on based on your findings in b). Present the output of the model as a well-formatted HTML table, and provide a well-designed plot that compares the density distribution of the propensity scores for the treated (smoker) and untreated units (non-smoker) before matching, in one panel. [2 points]**
+
+```{r, results = 'asis'}
+# Put your code here
+# Specification of the logit model
+model_ps <- glm(smoker ~ faminc + motheduc + fatheduc,
+            family = binomial(link = "logit"),
+            data = bwght)
+
+# Logit model output table"
+model_ps_table <- stargazer::stargazer(model_ps, type ="html", 
+                  dep.var.labels = "Smoking Status (Smoker = 1)", 
+                  covariate.labels = c("Family income (in $1000s)",
+                       "Mother's education (in years)", 
+                       "Father's education (in years)"),
+                  title = "Logit Model of Smoking Status")
+```
+
+::: answer
+
+Among the pre-selected variables, I have only selected those that are statistically significant. 
+:::
+
+```{r}
+# Creating the propensity score distribution
+ps_bwght <- dplyr::tibble(pr_score = predict(model_ps, type = "response"),
+                          smoker = model_ps$model$smoker) %>%
+                          arrange(pr_score) %>%
+                          arrange(desc(smoker)) 
+
+# Creating the plot that compares the density distribution of the propensity 
+# scores for the treated (smoker) and untreated units (non-smoker) before matching:
+ps_bwght_plot <- ggplot(ps_bwght, aes(x = pr_score, fill = factor(smoker))) +
+                 geom_density(alpha = 0.5) +
+                 theme_minimal() +
+                 theme(legend.position = "bottom") +
+                 labs(title = "Propensity Score Distribution",
+                 x = "Propensity Score",
+                 y = "Density",
+                 fill = "Smoker") 
+
+ps_bwght_plot
+```
+
+<br>
+
+d)  **Use the `MatchIt` package to implement propensity score matching. Use the nearest neighbor method, and use 1:1 matching by setting the ratio to 2; otherwise stick to the default settings of the function. Use the matched sample generated by the algorithm to i) produce and report a balance table, ii) estimate the effect of being a smoker on baby birth weight. [2 points]**
+
+```{r}
+# Put your code here
+# Omitting the NAs:
+bwght_2 <- bwght %>% 
+           dplyr::select(smoker, faminc, fatheduc, motheduc, bwght) %>% 
+           na.omit()
+
+# Creating the matched sample:
+one_match <- MatchIt::matchit(smoker ~ faminc + motheduc + fatheduc,
+                              method = "nearest", 
+                              ratio = 2, 
+                              replace = TRUE,
+                              data = bwght_2)
+
+# Creating the balance table:
+data_prop_match <- MatchIt::get_matches(one_match)
+
+list_cov <- c("faminc", "motheduc", "fatheduc")
+
+data_prop_match_table <- data_prop_match %>% 
+                          dplyr::summarize_at(list_cov, ~list(broom::tidy(t.test(. ~ smoker)))) %>% 
+                          purrr::map(1) %>% 
+                          dplyr::bind_rows(.id='variables') %>% 
+                          dplyr::select(variables, estimate1, estimate2, p.value) %>% 
+                          dplyr::mutate_if(is.numeric, round, 2) %>% 
+                          knitr::kable(col.names = c("Variable", "Control (Smoker = 0)", "Treat (Smoker = 1)", "P value")) %>% 
+                          kableExtra::kable_classic_2(full_width = F)
+
+data_prop_match_table
+```
+
+
+```{r, results = 'asis'}
+# Creating the regression table:
+prop_match_model <- lm(bwght ~ smoker, data = data_prop_match)
+
+prop_match_reg <- stargazer::stargazer(prop_match_model, type="html", 
+                    dep.var.labels = "Birth weight in ounces", 
+                    covariate.labels = c("Smoking Status (Smoker = 1)"),
+                    title = "Effect of Being a Smoker on Baby Birth Weight",
+                    digits = 2)
+```
+
+::: answer
+
+Based on our propensity score, the matched data and our regression, being a being a smoker during pregnancy, on average, reduces the baby birth weight of more than 11 ounces (11.27 ounces). In kg, the baby's birth weight is reduced of more than 300 g (11.27*0.02835 = 0.319 kg). 
+:::
+
+<br>
+
+------------------------------------------------------------------------
+
+### Task 3 - Simulating post-treatment bias in R [3 points in total]
+
+Demonstrate how conditioning on a post-treatment variable can bias the estimated total effect of a normally distributed variable X (mean 0, standard deviation 1) on Y. X is supposed to affect Y both directly and through mediator M. You don't have to consider other confounders, and can assume the relationship between all variables to be linear and stochastic (i.e. not completely deterministic). To demonstrate, simulate the data-generating process using R. Then, show the bias by comparing the estimates of linear models of Y on X, once with, once without controlling for M!
+
+<br>
+
+::: answer
+Conditioning on a mediator will lead to a post-treatment bias, as we would control for the mechanism influencing the relationship between X and Y (e.g. X -> Z -> Y). To not bias the estimated total effect of a normally distributed variable X on Y we should not control for a mediator.
+:::
+
+```{r}
+# Put your code here:
+
+# We can create a data set as described in the question, then, we run a simple
+# regression with x being normally distributed with mean of 0 and standard error
+# of 1 and normally distributed errors.
+
+set.seed(1234)
+n <- 1000 # being the sample
+x <- rnorm(n, mean = 0, sd = 1) # being the normally distributed variable x 
+# with mean 0 and standard deviation 1
+m <- 1.7 + 0.72 * x + 0.24 * rnorm(n) # being the mediator variable with a coefficient of
+# 0.5 as a function of x and some random noise also generated using rnorm().
+y <- 1.5 + 0.53 * m + 0.22 * rnorm(n) # being the outcome variable y as a function 
+# of x, m, and some additional random noise.
+
+df <- data.frame(x, y, m)
+```
+
+::: answer
+We can imagine that the effect of x on y is for example the effect of car dependency in a city (our explanatory variable x) on the quality of air in that city (our dependent variable y). However, the relation between car dependency and quality of air is mediated by the variable m representing for example the traffic (the average probability of traffic jams we can encounter in an average journey). Indeed, we can be sure that the traffic is one of the mechanisms by which car dependency influences air quality, as car dependency increases the probability of having more traffic jam, which increases the emission levels. Therefore, car dependency (x) influences quality of air (y) through the mediator traffic (m). If we want to be more precise we could also say that cars' emission levels is an interaction variable influencing the relationship between traffic and emissions (and therefore quality of air). However, I think that cars' emission levels is not relevant for this analysis. We can find many other examples like cars' emission levels, but they are not relevant to find the causal relationship between car dependency and quality of air because they are not related to both car dependency and quality of air.
+
+If we control for the mechanism "traffic", we will create (at least a partial) post-treatment bias that will capture (at least some of) the effect of car dependency on air pollution. If we assume that all the effect of car dependency is carried out by the mediator "traffic", than controlling for m will capture the causal impact of x on y. This means that after having conditioned for the mediator, the effect of x on y will be 0, and the totality of the effect is due to m. We can assume that in the real world, car dependency does not influence quality of air only through m, but also at least partially independently from "traffic" (in the sense that an intense use of cars, unless they are fully electric, influence air quality independently from traffic). However, even in a real setting, we will expect that controlling for the mediator m will significantly decrease the coefficient of the direct relationship between x and y, as we can imagine a strong correlation between car dependency and probability of traffic jams. 
+:::
+
+```{r, results='asis'}
+# Coming back to our estimation, we have to confront the two models and analyze 
+# the estimates. 
+# We can check if there is a statistical effect of x on m and of m on y, to see
+# if we are controlling for a meaningful mediator:
+med_check1 <- lm(x ~ m, df)
+med_check2 <- lm(m ~ y, df)
+
+reg_tab_check <- stargazer(med_check1, med_check2, type = "html", digits = 2,
+                  title = "Effect of the treatment on the mediator (1) and of the mediator on the outcome (2)")
+reg_tab_check
+```
+
+::: answer
+We see that the relationship between x and m (with an estimate of 1.24 and an R2 of 0.90) and the relationship between m and y (with an estimate of 1.44 and an R2 of 0.77) are both statistically significant, meaning that the mediator is a relevant one.
+:::
+
+```{r, results='asis'}
+# Creating the models to with (controlling for the mediator) and without (not 
+# controlling for the mediator) the post-treatment bias:
+model1 <- lm(y ~ x, df)
+model2 <- lm(y ~ x + m, df)
+
+# Results table of the linear models of our interest:
+reg_tab <- stargazer(model1, model2, type = "html", digits = 2,
+                  title = "Effect of X on Y without Post-Treatment Bias (1) and with Post-Treatment Bias (2)")
+```
+
+::: answer
+From the results, we can see that the coefficient of x in the first model is 0.39, it is statistically significant, and has a R2 of 0.71 (Adj. R2 of 0.71). The coefficient of x in the second model is 0.03 and the coefficient of m is 0.50, with an R2 of 0.77 (Adj. R2 of 0.77). It is important to notice that the coefficient of x in the second model (where we have a post treatment bias) has been greatly reduced due to the bias itself. Indeed, the mediator m captured the effect tha x had on y in the first model, precisely because m is the instrument by which x has an effect on y. Moreover, we can notice that in the second model, x is also lost its statistical significance, beside being less substantially significant.
+:::
+
+<br>
+
+```{r}
+image <- readPNG("/Users/giocopp/Library/Mobile Documents/com~apple~CloudDocs/Desktop/Unive/Hertie School/2nd Semester/Statistics 2/Labs/02-assignment/memestats.png")
+
+text_df <- data.frame(
+  bottom_text = "
+  
+  MatchIt::matchit(catholic ~ race_white + 
+                              w3income + p5hmage +
+                              p5numpla + w3momed_hsb,
+                              method = nearest,
+                              replace = FALSE , 
+                              ratio = 2,
+                              distance = glm, 
+                              link = logit,
+                              data = match_data)",
+  x = 0.95,
+  y = 0.95)
+
+ggplot() +
+  annotation_custom(rasterGrob(image), xmin=-Inf, xmax=Inf, ymin=-Inf, ymax=Inf) +
+  geom_text(data = text_df, aes(x, y, label = bottom_text), size = 3, color = "black", font=     
+  "Impact", hjust = 0, vjust = 1) +
+  theme_void()
+```
+
+
+
+<br>

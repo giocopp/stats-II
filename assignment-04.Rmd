@@ -1,0 +1,382 @@
+---
+title: "Assignment 4 - Difference-in-differences, panel data, and fixed effects"
+author: "GIORGIO COPPOLA, 224545"
+date: "`r format(Sys.time(), '%B %d, %Y | %H:%M:%S | %Z')`"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    highlight: tango
+    number_sections: no
+    theme: cosmo
+    toc: no
+---
+
+```{=html}
+<style>
+div.answer {background-color:#f3f0ff; border-radius: 5px; padding: 20px;}
+</style>
+```
+```{r, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      eval = TRUE,
+                      error = FALSE,
+                      message = FALSE,
+                      warning = FALSE,
+                      comment = NA,
+                      fig.align = "center")
+```
+
+------------------------------------------------------------------------
+
+```{r, include=F}
+# YOU CAN LOAD THE PACKAGES YOU ARE USING IN THIS CODE CHUNK
+pacman::p_load(tidyverse, dplyr, tidyr, readr, knitr, ggplot2, magick, memer)
+```
+
+::: {.alert .alert-warning role="alert"}
+**General rules:**
+
+-   **IMPORTANT: Please choose EITHER Task 1 OR Task 2. This time, solving one of the tasks is enough. You will not get additional credit if you solve both, but can be penalized if you submit wrong answers to both tasks.**
+-   Make sure to knit your Rmd regularly to catch bugs early. You'll have to submit the solution as HTML, not Rmd.
+-   You should clearly indicate what you submit as your solution for every single task. The code that produces a solution is not sufficient - we want to see the output too. If not indicated otherwise, the output in the console is sufficient, which means that you don't have to add a sentence like "The ATE is 3.5.".
+-   Figures need meaningful descriptions. Axes need meaningful labels. The use of colors serves a purpose. Tables need meaningful headers.
+-   For any numeric result you print (e.g., regression output, a table, or just a figure), do not report more than 2 decimal points. This means that you regularly have to apply rounding.
+-   Every task deserves its own space. Your comments and explanations should be clearly distinguishable from other content of your script.
+-   Your solution sheet should be straightforward to read. We should not have to actively search for the solutions. Don't print entire datasets or hundreds of observations.
+:::
+
+------------------------------------------------------------------------
+
+### Task 1 - Effects of a provisional bike infrastructure on cycling uptake [12 points in total]
+
+The dataset `biking_df.csv` contains data\footnote{These are simulated data} collected from bicycle counters across 200 cities in the country of Gazorpazorp. The national government randomly allocated funds for municipalities to arrange pop-up bicycle lanes. You are heading the policy evaluation team at the Ministry of Transport. Your task is to assess whether, and to what extent, the provisional bicycling infrastructure affected cycling uptake in the municipalities. Here is a short description of the data:
+
+Our dataset `biking_df`, contains the following information:
+
+-   `ìd`: A unique number identifier for each of the municipalities
+-   `treatment`: A binary variable that signals whether the municipality built the pop-up lanes
+-   `pre_lanes`: The average daily bike counts in the municipality before the pop-up lanes were built
+-   `post_lanes`: The average daily bike counts in the municipality after the pop-up lanes were built
+
+With these data, perform the following tasks:
+
+**a) Create a faceted density plot illustrating the distributions of the daily bike counts across time (pre-and post-lanes) and treatment groups (control and treated). The panels should be labelled properly and the group-specific means should be highlighted in the plot using vertical lines. [3 points]**
+
+```{r}
+# Put your code here
+load("biking_df.RData")
+save(biking_df, file = "biking_df.RData", version = 2)
+
+biking_df_long <- 
+  biking_df %>% 
+  tidyr::pivot_longer(cols = c(pre_lane, post_lane), 
+                      names_to = "period",
+                      values_to = "bike_lane") %>% 
+  dplyr::mutate(after_treatment = ifelse(period == "post_lane", 1, 0)) 
+
+facet_density_pl <- 
+biking_df_long %>% 
+  dplyr::mutate(period = ifelse(period == "post_lane", "T1 - Post-lane", "T0 - Pre-lane"), 
+                treatment = ifelse(treatment == 1, "Treated (D=1)", "Untreated (D=0)")) %>%
+  dplyr::group_by(period, treatment) %>% 
+  dplyr::mutate(group_mean = mean(bike_lane)) %>% 
+ggplot(aes(x = bike_lane, fill = factor(treatment))) +
+  geom_density(alpha = 0.5) +
+  scale_fill_manual(name = " ", 
+                     values = c("firebrick2", "lavenderblush3"),
+                     labels = c("Treatment", "Control")) +
+  facet_grid(treatment~period) + 
+  geom_vline(aes(xintercept = group_mean), linetype = "solid") + 
+  theme_bw() +
+  theme(legend.position = "none") +
+  labs(title = "Distributions of the Daily Bike Counts Across Time and Treatment Groups",
+       x = "Average Daily Bike Count",
+       y = "Density") +
+  theme(plot.title = element_text(size = 11, face = "bold"),
+        axis.title.x = element_text(size = 9),
+        axis.title.y = element_text(size = 9),
+        legend.title = element_text(size = 9))
+
+
+facet_density_pl
+```
+
+<br>
+
+**b) Ignore the time dimension and provide an estimate of the treatment on the outcome at the post-lanes period. Interpret your estimate numerically and discuss the assumption(s) we have to buy to take this as a causal effect. [2 points]**
+
+```{r}
+# Put your code here.
+model_1 <- lm(post_lane ~ treatment, data = biking_df)
+modelsummary::modelsummary(model_1,
+                           stars = c('*' = .1, '**' = .05, '***' = .01),
+                           statistic = "conf.int",
+                           gof_omit="AIC|BIC|Log.Lik.")
+
+# we can also extract the result from the table by simply subtract the count 
+# values in the post-treatment period:
+bikes_table <- 
+  biking_df %>% 
+  dplyr::group_by(treatment) %>% 
+  dplyr::summarize(mean = round(mean(post_lane),2)) %>% 
+  knitr::kable(col.names = c("Treatment", "Average Count in Post-T")) %>%
+  kableExtra::kable_paper(full = F)
+
+# 628.90 - 447.23 = 181.67
+bikes_table
+
+# we can also plot the average count to visualize the effect:
+bikes_plot <-  
+  ggplot(biking_df, aes(x = post_lane, fill = factor(treatment))) +
+  geom_density(alpha = 0.5) +
+  scale_fill_manual(name = " ", 
+                     values = c("lavenderblush4", "firebrick1"),
+                     labels = c("Control", "Treatment")) +
+  geom_vline(xintercept = 628.90, linetype = "solid", color = "firebrick2") + 
+  geom_vline(xintercept = 447.23, linetype = "solid", color = "lavenderblush4") + 
+  theme_minimal() +
+  theme(legend.position = "right") +
+  labs(title = "Distribution of Average Bike Count in the Post-Treatment Period",
+       x = "Count",
+       y = "Density") +
+  theme(plot.title = element_text(size = 11, face = "bold"),
+        axis.title.x = element_text(size = 9),
+        axis.title.y = element_text(size = 9),
+        legend.title = element_text(size = 9))
+
+bikes_plot
+```
+
+::: answer
+Put your answer here.
+
+Ignoring the time dimension effectively means that we only consider treated and control units in the post-treatment period. We could read this result essentially as: those who lived in municipalities where the pop-up cycle lanes were implemented increased their average daily number of bicycles by about 182 units, giving an average of 447 + 182 = 629) compared to those who lived in municipalities where the policy was not implemented (average of 447, which is the intercept). We can visualize this effect in the density plot.
+
+The assumption we need to make in order to believe the results of this model is the mean ignorability of treatment assignment, namely that the treatment assignment is independent of everything else. In the potential outcome framework, this means that the PO under control for those treated in the post-treatment period (as if they were not treated) is equal to the observed outcome of the control in the post-treatment period (did not and will never receive the treatment). This is not always obvious, as there could be possible factors that play a role in differentiating the treatment and control groups. However, we know that the treatment was randomly assigned, so there should be no other potential confounders that create baseline differences that also affect the comparison after treatment. If the treatment allocation was not completely random, but based on some precondition, then we would have to consider many other potential confounders, depending on the criteria by which the treatment would have been allocated.
+:::
+
+<br>
+
+**c) Report the average daily bike counts by treatment and observation period as well as the column differences in a table. With the values gathered from this table, manually extract the diff-in-diff estimate and report it in the text field. (You can use R as a calculator). [2 points]**
+
+```{r}
+# Put your code here.
+table_DD <- 
+  biking_df_long %>% 
+  dplyr::group_by(period, treatment) %>% 
+  dplyr::summarize(bike_count = mean(bike_lane)) %>%
+  tidyr::pivot_wider(names_from = period, values_from = bike_count) %>% 
+  dplyr::select(treatment, pre_lane, post_lane) %>% 
+  dplyr::arrange(desc(treatment)) %>%
+  dplyr::mutate(difference = post_lane - pre_lane) %>%
+  knitr::kable(col.names = c("Treatment", "Pre-Lane", "Post-Lane", "Difference"),
+               digits = 2) %>%
+  kableExtra::kable_paper(full_width = F) %>%
+  kableExtra::add_header_above(c("", "Period" = 2, ""))
+
+# 292.81 - 177.96 = 114.85
+table_DD
+```
+
+::: answer
+Put your answer here.
+
+Using the table, we can easily calculate the Diff-in-Diff estimate (292.81 - 177.96 = 114.85), and the post-treatment estimate as well (628.90	- 447.23	= 181.67). Notice that to calculate the Diff-in-Diff estimate, we have to subtract the difference between the treatment count values in the post-treatment period and the treatment count values in the pre-treatment period with the difference between the control count values in the post-treatment period and the control count values in the pre-treatment period. Also, we can notice, as expected, that the Diff-in-Diff estimate is smaller than the first estimate, because it takes in to account the baseline difference between the control and the treatment groups.
+:::
+
+<br>
+
+**d) Calculate the effect of the pop-up bike lanes via the regression formulation of the DiD model method, using clustered errors (you can stick to the default standard error type). Interpret your estimate numerically and discuss the assumption(s) we have to buy to take this as a causal effect. [3 points]**
+
+```{r}
+# Put your code here.
+model_2_ce <- estimatr::lm_robust(bike_lane ~ treatment + after_treatment + treatment*after_treatment, 
+                                                       se_type = , 
+                                                       clusters = id,
+                                                       data = biking_df_long)
+
+# DD regression table
+modelsummary::modelsummary(model_2_ce,
+                           stars = c('*' = .1, '**' = .05, '***' = .01),
+                           statistic = 'conf.int',
+                           gof_omit = "AIC|BIC|Log.Lik.",
+                           fmt = 2)
+
+# we can also plot the difference to easily visualise the effect
+plot_DD <-  
+  biking_df_long %>%
+  dplyr::group_by(period, treatment) %>% 
+  dplyr::mutate(group_mean = mean(bike_lane)) %>%
+  ggplot(aes(x = after_treatment, y = group_mean, color = factor(treatment))) +
+  geom_point() +
+  geom_line(aes(x = after_treatment, y = group_mean)) +
+  scale_x_continuous(breaks = c(0,1)) +
+  scale_color_manual(name = " ",
+                     values = c("lavenderblush4", "firebrick1"),
+                     labels = c("Control", "Treatment")) +
+  labs(title = "Average Bike Count in Pre- and Post-Treatment period",
+       x = "Period (0 = Pre-; 1 = Post-)",
+       y = "Count",
+       color = "Treatment Group") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 11, face = "bold"),
+        axis.title.x = element_text(size = 9),
+        axis.title.y = element_text(size = 9),
+        legend.title = element_text(size = 9))
+
+plot_DD
+```
+
+::: answer
+Put your answer here.
+
+The LATE can be seen in the interaction, which indicates an average increase of 114 bicycles after the implementation of the policy. For this calculation we need data in long format to be able to use time and treatment as dummy variables. Naturally, the estimate from the DD model is smaller than the estimate if we only consider the post-treatment period (which was around 182). Moreover, we can easily these differences in the last graph. Here we see that the difference between the two red points and the grey point corresponds to the estimate of model 1 (considering only the post-treatment period). In order to visualise the effect predicted by model 2 (the DD model), we have to imagine shifting the grey line until its intercept is equal to the intercept of the red line.
+
+However, we still have to assume parallel trends in the difference over time between the potential outcome under control in the treatment group and the potential outcome under control in the control group. This means that in the absence of the treatment or policy change, the outcome of interest for the treatment and control groups would have followed parallel trends over time. Therefore, any differences in the outcome between the two groups before the treatment should be stable over time and not systematically different. If this assumption is met, then any difference in outcome between the two groups after the treatment can be attributed to the treatment itself and not to other factors that may have affected the two groups differently.
+
+The assumption of parallel trends requires that the treatment and control groups are similar in all relevant characteristics. It also requires that any time-varying factors that affect the outcome of interest are similar between the treatment and control groups.
+:::
+
+<br>
+
+**e) The Minister of Transport will be meeting with the Infrastructure and Mobility Committee of Gazorpazorp. Make a brief policy recommendation based on your findings. (No more than 5 sentences). [1 point]**
+
+::: answer
+Put your answer here.
+
+Based on the analysis of the available data, we can recommend that the measure be extended to all municipalities and that the policy be implemented on a permanent basis. In fact, the results are strong enough to suggest that if we want to promote the use of bicycles and sustainable transport, it is a good idea to start by requalifying the country's urban road network.
+
+Moreover, to have an even greater impact, the theory suggests that we should also improve the public transport network to further reduce traffic and parking, and create more space for cycle lanes and walkable streets. We should test this hypothesis with further studies, for example by analysing how much traffic is reduced when we improve public transport (while maintaining the pop-up cycle lanes already implemented).
+:::
+
+<br>
+
+**f) A colleague of yours points out that the allocation process was not fully random as the government had led you to believe. It appears that previous bike uptake trends were taken into account in the decision-making process. Mayors of municipalities where bike uptake had been steadily growing lobbied for priority access to the resources. How would this change your evaluation of the program? [1 point]**
+
+::: answer
+Put your answer here.
+
+If the treatment and control groups are not similar in terms of potential outcomes under control, then the assumption of parallel trends may be violated, and any differences in outcome between the two groups after the treatment or policy change may be due to factors other than the treatment or policy change. If the allocation process is not completely random, but due to pre-existing differences in prior bike uptake, and municipalities with steadily increasing prior cycling uptake were given priority access to the treatment, then the potential controlled outcomes between the two groups will not be similar.
+
+Therefore, we cannot determine a precise causal effect of the implementation of pop-up cycle lanes on higher cycling, as we have to take into account the pre-existing trend in the treatment group. This means that our estimated coefficient value is biased by this pre-existing trend.
+:::
+
+<br>
+
+------------------------------------------------------------------------
+
+### Task 2 - Effects of tax incentives on unemployment claims [12 points in total]
+
+The dataset `unemployment_df.csv` contains data from 2010-2018 unemployment claims\footnote{These are simulated data} collected across the 20 cities in the State of New Tatooine. During this time period, some city government authorities put in place a tax incentive plan for employers/industry to stimulate economic growth and reduce unemployment in their cities.
+
+You are part the policy evaluation team at the Secretary of Finance of the State of New Tatooine. Your task is to assess whether, and to what extent, the tax incentives affected the number unemployment claims in the cities Here is a short description of the data:
+
+Our dataset `unemployment_df`, contains the following information:
+
+-   `city`: The name of the city
+-   `region`: The name of the region within the State
+-   `year`: The year of the entry
+-   `claims`: The number of unemployment claims per 100,000 inhabitants
+-   `tax_incentive`: A binary variable that signals whether the city had a tax incentive in place at the specific time of the entry
+
+With these data, perform the following tasks:
+
+**a) Create a faceted graph showing the unemployment claim trajectories over time by city, and highlight (e.g., using color) when the city had a tax incentive in place. [2 points]**
+
+```{r}
+# Put your code here.
+
+
+```
+
+<br>
+
+**b) Ignore the unit- and time-dimensions and calculate a naïve estimate. What do these results tell you? Interpret your estimate numerically and discuss the assumption(s) we have to buy to take this as a causal effect. [2 points]**
+
+```{r}
+# Put your code here.
+```
+
+::: answer
+Put your answer here.
+:::
+
+<br>
+
+**c) Run a unit-fixed effects model. Feel free to use LSDV with `lm()` or the de-meaning approach with `plm()`. How does the coefficient for the tax change in comparison to the pooled model? What do these results tell you? Interpret your estimate. [2 points]**
+
+```{r}
+# Put your code here.
+```
+
+::: answer
+Put your answer here.
+:::
+
+<br>
+
+**d) Run a unit- and time-fixed effects model using the de-meaning approach with `plm()`. What do these results tell you? Interpret your estimate. [2 points]**
+
+```{r}
+# Put your code here.
+```
+
+::: answer
+Put your answer here.
+:::
+
+<br>
+
+**e) Run a unit- and time-fixed effects model using the least-squares dummy variables (LSDV) approach with `lm()`. How is this model different from the "de-meaned" model from the previous point? [2 points]**
+
+```{r}
+# Put your code here.
+```
+
+::: answer
+Put your answer here.
+:::
+
+<br>
+
+**f) Using the LSDV unit- and time-fixed effects model: What is the average expected difference in unemployment claims between the cities of Minetown and Dark Meadow holding the year and treatment state constant. [1 point]**
+
+```{r}
+# Put your code here.
+```
+
+::: answer
+Put your answer here.
+:::
+
+<br>
+
+**g) Briefly discuss why the results of the unit- and time-fixed effects models differ from the rest. What could be biasing the results from the pooled and unit-fixed effects models? [1 point]**
+
+::: answer
+Put your answer here.
+:::
+
+<br>
+
+------------------------------------------------------------------------
+
+### Task 3 - Statistics inspired meme [1 bonus percentage point]
+
+Create a stats-inspired meme using `memer` (or any other R meme dedicated package) to earn one bonus percentage point. The meme should be related to one of the topics covered in the sessions this assignment is based on.
+
+```{r, out.width="380"}
+# Put your code here.
+meme <- meme_get("DosEquisMan") %>% 
+  meme_text_top("I don't always \nrandomly allocate treatments", size = 26) %>% 
+  meme_text_bottom("But when I do\nI have parallel trends", size = 26)
+
+meme_image_file <- "my_meme.png"
+image_write(meme, path = meme_image_file)
+
+knitr::include_graphics(meme_image_file)
+```
+
+<br>
+

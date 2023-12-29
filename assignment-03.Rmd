@@ -1,0 +1,588 @@
+---
+title: "Assignment 3 - IVs and RDDs"
+author: "GIORGIO COPPOLA; 224545"
+date: "`r format(Sys.time(), '%B %d, %Y | %H:%M:%S | %Z')`"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    highlight: tango
+    number_sections: no
+    theme: cosmo
+    toc: no
+---
+
+```{=html}
+<style>
+div.answer {background-color:#f3f0ff; border-radius: 5px; padding: 20px;}
+</style>
+```
+```{r, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      eval = TRUE,
+                      error = FALSE,
+                      message = FALSE,
+                      warning = FALSE,
+                      comment = NA,
+                      fig.align = "center")
+
+# Custom function to install needed packages, if they're not
+# already installed on your machine
+check.packages <- function(pkg){
+  new.pkg <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+  if (length(new.pkg))
+    install.packages(new.pkg, dependencies = TRUE,
+                     repos = "https://cran.rstudio.com")
+  sapply(pkg, require, character.only = TRUE)
+}
+
+check.packages(c("tidyverse", "estimatr", "rdd", "rdrobust", "modelsummary", "kableExtra", "knitr"))
+```
+
+<!-- Do not forget to input your Hertie student ID in the YAML configuration up there -->
+
+------------------------------------------------------------------------
+
+```{r, include=F}
+# YOU CAN LOAD THE PACKAGES YOU ARE USING IN THIS CODE CHUNK
+pacman::p_load(tidyverse, dplyr, knitr, htmlTable, ggplot2, readr, rdrobust, rdd, modelsummary, stargazer, memery)
+```
+
+::: {.alert .alert-warning role="alert"}
+**General rules:**
+
+-   Make sure to knit your Rmd regularly to catch bugs early. You'll have to submit the solution as HTML, not Rmd.
+-   You should clearly indicate what you submit as your solution for every single task. The code that produces a solution is not sufficient - we want to see the output too. If not indicated otherwise, the output in the console is sufficient, which means that you don't have to add a sentence like "The ATE is 3.5.".
+-   Figures need meaningful descriptions. Axes need meaningful labels. The use of colors serves a purpose. Tables need meaningful headers.
+-   For any numeric result you print, do not report more than 2 decimal points. This means that you regularly have to apply rounding.
+-   Every task deserves its own space. Your comments and explanations should be clearly distinguishable from other content of your script.
+-   Your solution sheet should be straightforward to read. We should not have to actively search for the solutions. Don't print entire datasets or hundreds of observations.
+:::
+
+------------------------------------------------------------------------
+
+### Task 1 - LEGO and cognitive development in early childhood [9 points in total]
+
+```{r echo = F, fig.align="center", out.width="50%"}
+knitr::include_graphics("https://www.verywellhealth.com/thmb/WyfCtmhzBO-MxPM-L3_Of3w3fMg=/1500x0/filters:no_upscale():max_bytes(150000):strip_icc()/GettyImages-176829483-1db463453a484d4988b187a7540b4dff.jpg")
+```
+
+LEGO brick building has become a popular intervention for promoting cognitive development in children. Research has shown that playing with LEGO bricks can enhance children's cognitive abilities, such as spatial reasoning, problem-solving, and creativity.
+
+Suppose we want to estimate the effect of LEGO brick building on basic problem-solving abilities of preschool children. We initially considered implementing a randomized experiment where we assign children to the treatment (the treatment being one-hour of LEGO building activities per day). As researchers, we realize that it is not possible, perhaps also unethical, for us to force children to play with LEGO bricks or to refrain children from playing with LEGO bricks. Therefore, we decide to implement an encouragement design. The results are in the `lego_df.RData` dataset, which has the following variables:
+
+-   `id`: a numeric variable with the individual pre-schooler id
+-   `age`: a numeric variable with the age of the pre-schooler in months
+-   `encour`: a binary indicator of the encouragement to play with LEGO bricks from the preschool teacher
+-   `played`: a binary indicator of the treatment which indicates if the child actually playing with LEGO bricks at any given point of the school day
+-   `test`: a numeric variable that represents the test score that each children obtained in the assessment of the different problem-solving activities
+
+With these data, do the following:
+
+**a) Illustrate visually the observed differences in the outcome of interest - in terms of the entire distributional form, the mean, and the median - between the `played = 1` and the `played = 0` groups. [2 points]**
+
+```{r}
+# Put your code here
+load("lego_df.RData")
+
+# creating a table showing the mean for the two groups
+lego_df %>% 
+  group_by(played) %>% 
+  summarize(test_mean = mean(test)) %>% 
+  round(2)
+
+# creating a table showing the median for the two groups
+lego_df %>% 
+  group_by(played) %>% 
+  summarize(test_median = median(test)) %>% 
+  round(2)
+
+# plotting the distribution of the outcome of interest between the two groups
+distr_plot <-  
+  ggplot(lego_df, aes(x = test, fill = factor(played, labels = c("Not played", "Played")))) +
+  geom_density(alpha = 0.5) + 
+  scale_fill_manual(values = c("lightblue", "orange")) +
+  scale_color_manual(values = c("cadetblue3", "darkorange")) + # added line
+  theme_minimal() +
+  geom_vline(aes(xintercept = mean(test[played==0]), color = "Not played")) + 
+  annotate("text", x = 39, y = 0.08, label= "Not played: mean", size=3,
+           color="black", angle = 90) +
+  geom_vline(aes(xintercept = median(test[played==0]), color = "Not played")) + 
+  annotate("text", x= 42, y=0.08, label= "Not played: median", size=3,
+           color="black", angle = 90) +
+  geom_vline(aes(xintercept = mean(test[played==1]), color = "Played")) +
+  annotate("text", x= 57, y=0.08, label= "Played: mean", size=3,
+           color="black", angle = 90) +
+  geom_vline(aes(xintercept = median(test[played==1]), color = "Played")) + 
+  annotate("text", x= 60, y=0.08, label= "Played: median", size=3,
+           color="black", angle = 90) +
+  labs(title = "Test Score Distribution: Control and Treatment groups",
+       x = "Individual Test Score",
+       y = "Density of Observations",
+       fill = "Group",
+       color = "Group")  +
+    theme(legend.position = "right",
+        plot.title = element_text(size = 11, face = "bold"),
+        axis.title.x = element_text(size = 9),
+        axis.title.y = element_text(size = 9),
+        legend.title = element_text(size = 9))
+
+distr_plot
+
+```
+
+<br>
+
+**b) Discuss the assumptions needed for the experimental encouragement to work as a valid instrument for playing with LEGO bricks (not just generally, but applied to the specific case) and describe potential violations of these assumptions. [2 points]**
+
+::: answer
+The general assumptions for experimental encouragement to work as a valid instrument are **(1) relevance, (2) exogeneity, (3) exclusion restriction, and (4) monotonicity.** Additionally, as for other causal inference setups, we need SUTVA and homogeneity.
+
+In this specific case,
+
+**(1)** **Relevance** (also called non-zero average encouragement effect) is referred to the fact that the instrument Z (namely the encouragement to play with LEGO bricks from the preschool teacher) creates variation in the treatment D (namely it has a statistical effect on actually playing with LEGO) . In this case, to satisfy the relevance assumption we should observe an higer use of LEGO under the encouragement condition. In other words, we should have statistical evidence that the encouraged children are effectively more likely to play with LEGO. This assumption would be violated if the encouragement has no statistical effect on the probability of playing with LEGO, meaning that the encouragement is not relevant for the treatment.
+
+**(2) Exogeneity** (also referred to asignorability of the instrument) is fulfilled when potential outcomes and treatments are independent of the instrument Z: {Yi(1), Yi(0), Di(1), Di(0)} ⊥ Zi. This means that there should not be a confounding structure between the encouragement and treatment on the one hand, and between the encouragement and outcome on the other. Generally, exogeneity is fulfilled by the randomized (or quasi-randomized) allocation of the encouragement. If the encouragement is not randomly allocated, it would induce dependence between potential treatment and potential outcomes. In this case, a violation of exogeneity would be that the encouragement is at discretion of the teacher. If so, it can be that good teachers encourage the use of LEGO, and bad teachers do not. In this case, the better performance (outcome) is may not fully due to encouragement, but because of the better teaching method. In the same way, if teachers encourage the treatment, it can be that some (maybe better) teachers are more convincing in the use of LEGO (treatment), while other (maybe bad) teachers are not convincing. Therefore, we need to be sure that the treatment is randomly allocated.
+
+**(3) Exclusion restriction** is fulfilled when the instrument affects the outcome only via the treatment in a way that there is no direct effect from encouragement to the treatment, or an effect of the encouragement to the outcome via another mediator.
+
+In practice it implies that the outcome (in this case the variation of the score in the test) created by the instrument (encouragement) should always be mediated by the treatment (playing with LEGO). In the PO framework, it also implies that the PO should be the same for the same treatment status: if the D = 0 (Not played), then the outcome under encouragement and the outcome under non encouragement should be the same (we expect a lower score). If D = 1 (Played), then encouragement or non-encouragement should lead to the same outcome (an higher score). For this assumption to hold, we need to assume that teacher encouragment to play LEGO has no other impact on test scores. A potential violation in this example is that encouraging children to play LEGO may just have an impact on their mood (e.g. they feel happy), and this might have an impact on their attention and performance during the test.
+
+**(4) Monotonicity** is just the assumption that there are no defiers. Usually, children are defiers *par excellence,* therefore is hard to make this assumption, unless there is strict control over them. Indeed, we can easely imagine a situation in which children play even without encouragement, making those always-takers. This would create some bias in our results.
+:::
+
+<br>
+
+**c) What do we know about non-compliance in the data? Provide descriptive evidence (table or plot) plus a short verbal description. [1 point]**
+
+```{r}
+# Put your code here
+lego_df %>% 
+  janitor::tabyl(played, encour) %>% 
+  janitor::adorn_totals(c("row", "col")) %>% 
+  knitr::kable(col.names = c("Played with LEGO", "No", "Yes", "Total")) %>% 
+  kableExtra::kable_paper(full_width = F) %>% 
+  kableExtra::add_header_above(c("", "Encouragement to Play with LEGO" = 2, ""))
+```
+
+<br>
+
+::: answer
+Put your answer here.
+
+We can observe that the degree of non-compliance is quite high. However, we cannot say if they are defiers, always-takers, or never-takers. If we assume monotonicity, we can notice that there are more always-takers in the control group (110) than never-takers in the treatment group (66). However, we do not know about the never-takers in the control group, and about the always-takers on the treatment group.
+:::
+
+<br>
+
+**d) Report a statistic showing whether the encouragement can or cannot be considered a strong instrument. [1 point]**
+
+```{r, results = 'asis'}
+# Put your code here
+enc_lm <-  lm(played ~ encour, data = lego_df)
+
+stargazer::stargazer(enc_lm, type = "html",
+  dep.var.labels = "Played with LEGO",
+  covariate.labels = c("Encouragement (Yes = 1)"),
+  title = "Effect of Encouragement on Playing with LEGO",
+  digits = 2)
+
+```
+
+<br>
+
+::: answer
+Put your answer here.
+
+As a "rule-of-thumb", for a single endogenous regressor to be considered a strong instrument should have a **F-statistic** greater than 10. In this case, the F-statistic is **31.99**, and therefore it can be considered a strong instrument.
+:::
+
+<br>
+
+**e) Generate a *naïve estimate* of playing with LEGO bricks on problem-solving abilities, ignoring the encouragement status. Then, calculate the estimate for the *Intent to Treat effect (ITT)*. Finally, generate an estimate for the *Local Average Treatment Effect (LATE)*. Report all estimates/models in one joint table (don't report separate tables for the individual please), and provide an appropriate discussion of all estimated effects that gives the reader an understanding about what can be learned from the models. [3 points]**
+
+```{r}
+# Put your code here
+lego_df_rn <- lego_df %>%
+  rename("Played with LEGO bricks (Yes = 1)" = played,
+         "Encouragement (Yes = 1)" = encour)
+
+naive_model <- lm(test ~ `Played with LEGO bricks (Yes = 1)`, data = lego_df_rn)
+itt_model <- lm(test ~ `Encouragement (Yes = 1)`, data = lego_df_rn)
+late_model <- estimatr::iv_robust(test ~ `Played with LEGO bricks (Yes = 1)` | `Encouragement (Yes = 1)`, data = lego_df_rn)
+
+modelsummary::modelsummary(list("Naive Model" = naive_model ,"Intent to Treat Model" = itt_model, "LATE Model" = late_model),
+            stars = c('*' = .1, '**' = .05, '***' = .01),
+            statistic = 'conf.int',
+            fmt = 2,
+            title = "Comparison of (1) Naive, (2) ITT and (3) LATE models")
+
+```
+
+<br>
+
+::: answer
+Put your answer here.
+
+The **Naive estimate** suggests that playing with LEGO is associated with a 17.34 points increase in test scores, independently form the encouragement, in respect to the average test score of 40.48 indicated in the intercept. Indeed, as showed in the first table in exercise 1(a), the average test score for the treated is 57.82, namely 17.34 + 40.48. However, there can be unobservable confounding factors that inflate the coefficient.
+
+The **ITT estimate** suggests that encouraging children to play with LEGO bricks is associated with an increase of 8.36 points in the test score in respect to the non-encouraged childrens' average test score of 46.67 indicated in the intercept. This estimate focuses on the ITT rather than the actual treatment received, regardless of whether the units actually played with LEGO or not.
+
+The **LATE estimate** suggests that the average test score for compilers, namely those who played with LEGO because of the encouragement, is 33.75 points higher than the average test score of those who did not play with LEGO and that were not encouraged to do so, which is 30.60. The LATE accounts for the fact that only a subset of the encouragement group actually played with LEGO, and only a subset of the non-encouragement group would have played if encouraged to do so. However, we cannot clearly identify who the compilers are.
+
+The LATE model offers a more causally interpretable estimate because it accounts for the endogeneity of the instrument.
+:::
+
+<br>
+
+------------------------------------------------------------------------
+
+### Task 2 - Effects of a pre- and post-natal health care policy [12 points in total]
+
+The dataset `hospitals.tsv` provides data collected on women who gave birth at any one of several hospitals in disadvantaged neighborhoods in New York. These data are used to evaluate the effect of a government policy that makes available pre- and post-natal health care for pregnant women, new mothers, and their children, who meet certain income eligibility requirements. To receive services, the income of these women has to have been below \$20,000 at the time they gave birth. The general question of interest is whether this program increases a measure of child health at age 3. Here is a short description of the data:
+
+-   `incomeR:` Reported household income in thousands
+-   `health:` A numeric health score
+-   `program:` A binary program indicator
+
+With these data, perform the following tasks:
+
+**a) Provide a visual check and a brief interpretation of what you see! Does it make sense to employ a sharp RD in this case? [1 point]**
+
+```{r}
+# Put your code here
+hosp <- read.table("hospitals.tsv", sep="\t", header = T)
+
+RD_check_plot <-  
+  ggplot(hosp, aes(x = incomeR, 
+                   y = program,
+                   color = factor(program))) +
+  geom_point(size = 1.25, alpha = 0.65) + 
+  labs(title = "Probability of Recieving the Treatment Given the Income Level",
+       x = "Household Income (thousands)", 
+       y = "Treatment Probability (proportion)") +
+  scale_color_manual(values = c("#a7a8aa", "#ff990d"), 
+                     name = " ", 
+                     labels = c("Non-eligible, > $20,000", "Eligible, < $20,000")) +
+  geom_vline(xintercept = 0, linetype = "dotted") + 
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        plot.title = element_text(size = 11, face = "bold"),
+        axis.title.x = element_text(size = 9),
+        axis.title.y = element_text(size = 9),
+        legend.title = element_text(size = 9))
+
+RD_check_plot
+```
+
+<br>
+
+::: answer
+Put your answer here.
+
+It does **make sense** to employ a sharp RDD because the cut-off of the forcing variable household income is a perfect determinant of who gets the treatment. Indeed, from the data we observe that who has an income above \$20,000 has 0% probability of being a recipient of the health care program, and who has an income below \$20,000 has 100% probability of receiving it.
+:::
+
+<br>
+
+**b) Create a scatterplot of reported income versus health status. Plot** <b style="color:#ff990d;">treated</b> observations in <b style="color:#ff990d;">#ff990d (orange)</b> and <b style="color:#a7a8aa;">controls</b> in [#a7a8aa (light gray)]{style="color:#a7a8aa;"}. Keep this convention for future plots in this task. [1 point]
+
+```{r}
+# Put your code here
+scatt_plot <- 
+  ggplot(hosp, 
+         aes(x = incomeR, 
+             y = health,
+             color = factor(program))) +
+  geom_point(size = 0.85, alpha = 0.5) +
+  labs(title = "Exploratory Scatterplot: Health Status Given the Income Level",
+       x = "Household Income (thousands)",
+       y = "Health Status (score)") +
+  scale_color_manual(name = "",
+                     values = c("#a7a8aa", "#ff990d"),
+                     labels = c("Control", "Treatment")) +
+   geom_vline(xintercept = 20, linetype = "dotted")+
+   theme_minimal() +
+   theme(legend.position = "right",
+        plot.title = element_text(size = 11, face = "bold"),
+        axis.title.x = element_text(size = 9),
+        axis.title.y = element_text(size = 9),
+        legend.title = element_text(size = 9))
+
+scatt_plot
+```
+
+<br>
+
+**c) Calculate a naïve estimate of the effect of the program by running a regression of health on the indicator for program participation. What is the estimate, and why is it naïve? [1 point]**
+
+```{r, results = 'asis'}
+# Put your code here
+naive_est <- lm(health ~ program, data = hosp)
+
+stargazer::stargazer(naive_est, type = "html",
+  dep.var.labels = "Naive Estimate of Health Status",
+  covariate.labels = c("Program (Yes = 1)"),
+  title = "Naive Effect of Receiving the Healthcare Program on Health Status",
+  digits = 2)
+
+```
+
+<br>
+
+::: answer
+Put your answer here.
+
+The naive estimate is **-3.54**, and is statistically significant. It says that, when aged 3, the children of the mothers who received the treatment have health outcomes that are 3.54 points lower in respect to those in the control group. The naive estimate simply compares the mean health score of the treatment group with the mean health score of the control. Therefore, this estimate is naive because if does not take into account the baseline differences between the two groups --- for example that the control is in average richer and has higher health scores --- but also other possible confounding variables. In fact, the treatment was allocated on the basis of the forcing variable "income", a variable that directly effects both the treatment allocation, and the health score. Therefore, this estimate does not tell much about the causal effect of the policy, since it can be very much **biased**.
+
+An accurate measure would be given by the comparison of two groups for which we can reasonably assume the contiuity of potential outcomes across them. Such condition is observable in the units that are reasonably close to the cut-off --- for example, those that have an income between \$18,000 and \$22,000. We can assume that the only difference between the two groups is the receipt of the treatment, and receiving the treatment can be considered a matter of luck. Only through this **as-if randomization** we can make some meaningful causal claims, reasonably excluding some important confounders (for example, the most powerful confounder we would exclude is income).
+:::
+
+<br>
+
+**d) Cut down the dataset to a sample containing only the units within ± \$2800 from the threshold, and then estimate the LATE at the threshold using a linear model with common slopes with `lm()`. Provide a plot in which you show the fitted curves and the underlying scatterplot of the data. Interpret your estimate. [2 points]**
+
+```{r, results = 'asis'}
+# Put your code here
+hosp2 <- hosp %>% 
+  mutate(income_margin = incomeR - 20) 
+# In this way we add a variable to center the forcing variable (the cut-off) at zero.
+
+hosp2 <- hosp2 %>% 
+  filter(dplyr::between(income_margin, - 2.8, + 2.8))
+# Choose the bandwidth.
+
+# Model estimation
+late_est <- lm(health ~ program + income_margin, data = hosp2)
+
+stargazer::stargazer(late_est, type = "html",
+  dep.var.labels = "Health Status",
+  covariate.labels = c("Program (Yes = 1)", "Income Margin"),
+  title = "LATE Effect of Receiving Healthcare Program on Health Status",
+  digits = 2)
+
+# Visualization
+hosp2$yhat_late_est <- predict(late_est) 
+# Extract the predicted values
+
+# Plotting the scatter plot with fitted curves
+linear_plot <- 
+  hosp2 %>% 
+  ggplot(aes(x = income_margin,  
+             y = yhat_late_est,
+             col = factor(program))) +
+  geom_point(aes(x = income_margin, 
+                 y = health,
+                 col = factor(program)),
+             size = 1, alpha = 0.5) +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  labs(title = "Linear Model with Common Slope",
+       x = "Income Margin",
+       y = "Health Status") +
+  geom_line(data = hosp2[hosp2$income_margin >= 0,], 
+            color = "#a7a8aa",
+            size = 1) +
+  geom_line(data = hosp2[hosp2$income_margin < 0,], 
+            color = "#ff990d",
+            size = 1) +
+  scale_color_manual(name = "",
+                     values = c("#a7a8aa", "#ff990d" ),
+                     labels = c("Control", "Treatment")) + 
+ theme_minimal() +
+   theme(legend.position = "right",
+        plot.title = element_text(size = 11, face = "bold"),
+        axis.title.x = element_text(size = 9),
+        axis.title.y = element_text(size = 9),
+        legend.title = element_text(size = 9))
+
+linear_plot
+
+```
+
+<br>
+
+::: answer
+Put your answer here.
+
+We cutted down the dataset to a sample containing units with income level within \$17,200 and \$22,800, assume that within this **bandwidth**, the only substantial difference between units is the recepit of the treatment. Indeed, we are assuming that the potential outcome under treatment and under control are linear continuation of the slopes in X.
+
+The **'Program' estimate** says that we can expect an average **increase of 1.29 points** in health scores for those received the healthcare program at the threshold.\
+The **'Income Margin' estimate** predicts an **increase of 0.28 points** in health score for every 1 thousand dollars increase in the household income.
+:::
+
+<br>
+
+**e) Conduct the same analysis as in part (d) except that you now use a quadratic model with different model coefficients for the treated and control groups. Interpret your estimate. [2 points]**
+
+```{r, results = 'asis'}
+# Put your code here
+# Model estimation
+late_est_quad <- lm(health ~ program +
+                    income_margin +
+                    I(income_margin * program) +
+                    I(income_margin^2) +
+                    I((income_margin^2) * program),
+                   data = hosp2)
+
+stargazer::stargazer(late_est_quad, type = "html",
+  dep.var.labels = "Health Status",
+  covariate.labels = c("Program (Yes = 1)",
+                       "Income Margin",
+                       "Income Margin * Program",
+                       "Income Margin quadratic",
+                       "Income Margin quadratic * Program"),
+  title = "Quadratic Model of Receiving Healthcare Program on Health Status",
+  digits = 2)
+
+# Visualization
+hosp2$yhat_late_est_quad <- predict(late_est_quad) 
+# Extract the predicted values
+
+# Plotting the scatter plot with fitted curves
+quadr_plot <- hosp2 %>% 
+  ggplot(aes(x = income_margin,  
+             y = yhat_late_est_quad,
+             col = factor(program))) +
+  geom_point(aes(x = income_margin, 
+                 y = health, 
+                 col = factor(program)),
+                 size = 1, alpha = 0.5) +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  labs(title = "Quadratic Model",
+       x = "Income Margin",
+       y = "Health Status") +
+  geom_line(data = hosp2[hosp2$income_margin >= 0,], 
+            color = "#a7a8aa",
+            size = 1) +
+  geom_line(data = hosp2[hosp2$income_margin < 0,], 
+            color = "#ff990d", 
+            size = 1) +
+  scale_color_manual(name = "",
+                     values = c("#a7a8aa", "#ff990d" ),
+                     labels = c("Control", "Treatment")) + 
+ theme_minimal() +
+   theme(legend.position = "right",
+        plot.title = element_text(size = 11, face = "bold"),
+        axis.title.x = element_text(size = 9),
+        axis.title.y = element_text(size = 9),
+        legend.title = element_text(size = 9))
+
+quadr_plot
+
+```
+
+<br>
+
+::: answer
+Put your answer here.
+
+The **'Program' estimate** says that we can expect an average **increase of 0.92 points** in health scores for those received the healthcare program at the threshold.\
+The **'Income Margin' estimate** predicts a **decrease of 0.83 points** in health score for every 1 thousand dollars increase in the household income, although not statistically significant.
+:::
+
+<br>
+
+**f) Now estimate, with the full dataset, the LATE at the threshold using a local linear regression with `rdrobust::rdrobust()`. Use the defaults (`kernel = "tri"` and `bwselect = "mserd"`). Interpret your estimate. [2 points]**
+
+```{r}
+# Put your code here
+hosp <- hosp %>% 
+  mutate(income_margin = incomeR - 20)
+
+suppressWarnings({
+late_est_full <- rdrobust::rdrobust(hosp$health,
+                             hosp$income_margin,
+                             c = 0,
+                             p = 1,
+                             kernel = "tri",
+                             bwselect = "mserd",
+                             all = TRUE)})
+
+summary(late_est_full)
+
+# Plotting the robust regression model helps to interpret the output. 
+suppressWarnings({
+  rdrobust::rdplot(hosp$health, 
+                 hosp$income_margin,  
+                 c = 0,
+                 p = 1,
+                 kernel = "tri",
+                 title = "Robust Regression Discontinuity Plot",
+                 x.label = "Income Margin",
+                 y.label =  "Health Score")
+})
+```
+
+<br>
+
+::: answer
+Put your answer here.
+
+The LATE estimate showed in the output of the `rdrobust()` estimation of the effect of the treatment for compliers at the cut off point on the full data set is a reduction of the health score by **1.24** points for the treated units.
+
+However, the negative sign of the coefficient does not mean that the treatment decreased health scores. This is because the treatment was allocated to individuals below the threshold, which is the directional variable used by the `rdrobust()` function. Indeed, the `rdrobust()` function is just showing that at the cut-off in the Income variable (x), the outcome variable (y) Health Score drops by 1.24. This is in fact the difference between the treatment and the control group at the cut-off. Since we have the treatment group in the left-hand side of the graph, proceeding on the x-axis beyond the cut-off makes the y-value (Health Score) to drop by 1.24. This substantially means that the policy actually increase the Health Score of 1.24 point, as those in the control immediately beyond the threshold have an average value that is 1.24 points lower --- and we assume the two groups being equal except for the treatment assignment.
+
+Moreover, notice that the `rdrobust()` function automatically optimizes the bandwidth at 5.395, taking a larger subsection to run the RDD analysis.
+:::
+
+<br>
+
+**g) A colleague now points out to you that some women may have incentives in these settings to misreport their actual income. Provide visual evidence that helps support or refute the claim. What assumption is called into question if women are truly misreporting in this manner? [2 points]**
+
+```{r}
+# Put your code here
+ hist_income <-
+  ggplot(hosp, 
+       aes(x = incomeR)) +
+  geom_histogram(fill = "goldenrod1") +
+  labs(title = "Histogram of Income Distriubtion",
+       x = "Income (in thousands)",
+       y = "Number of Observation") +
+  geom_vline(xintercept = 20, linetype = "dotted") +
+  theme_minimal() +
+   theme(plot.title = element_text(size = 11, face = "bold"),
+        axis.title.x = element_text(size = 9),
+        axis.title.y = element_text(size = 9))
+
+hist_income
+```
+
+<br>
+
+::: answer
+Put your answer here.
+
+The histogram suggest that the continuity assumption is partially invalidated by sorting or self-selection. We can notice a disproportionatelly high number of income records just before the cut-off, suggesting self-selection to become eligible for the program, and in this way invalidating the local randomization.
+:::
+
+<br>
+
+**h) Another colleague points out to you that several other government programs (including food stamps, etc.) have the same income threshold for eligibility. How might this knowledge impact your interpretation of your results? [1 point]**
+
+<br>
+
+::: answer
+Put your answer here.
+
+The fact that other welfare programs have the same income for eligibility can introduce some bias in our estimation because it can make more difficult to establish the causal effect of the policy we are interested. In fact, the other policies can also have an effect on the children health, inflating the LATE, and acting as confounders. RDD is valid only if we can assume the continuity of potential outcomes, which effectively means that units either side of the threshold are effectively the same except for effect of the treatment assignment. If other policies use the same cut-off point, then the potential outcomes are no longer continuous, as there are other relevant variables which could affect the outcome, other than the treatment we are interested into.
+:::
+
+<br>
+
+------------------------------------------------------------------------
+
+### Task 3 - Statistics inspired meme [1 bonus percentage point]
+
+Create a stats-inspired meme using `memer` (or any other R meme dedicated package) to earn one bonus percentage point. The meme should be related to one of the topics covered in the sessions this assignment is based on.
+
+```{r}
+# Put your code here
+out <- system.file("philosoraptor.jpg", package = "memery")
+lab <- c("Endogeneity???")
+meme(out, lab[1], "meme1.jpg")
+
+knitr::include_graphics("meme1.jpg")
+
+```
+
+<br>
